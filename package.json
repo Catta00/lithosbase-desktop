@@ -1,0 +1,47 @@
+{
+  "name": "lithosbase-desktop",
+  "version": "1.0.0",
+  "description": "Lithosbase desktop app — specchio della web app (lithosbase.app) con accesso.",
+  "main": "main.js",
+  "author": "Lithosbase",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.lithosbase.desktop",
+    "productName": "Lithosbase",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": ["main.js", "preload.js", "package.json"],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns",
+      "category": "public.app-category.business"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png",
+      "category": "Office"
+    }
+  }
+}
