@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   dmg:
     runs-on: macos-14
@@ -55,8 +58,27 @@ jobs:
           spctl -a -vvv -t install "$APP" 2>&1 || true
           ls -la release/*.dmg
 
+      # L'artefatto serve a noi per provare: lo scarica solo chi ha accesso al
+      # repository, ed e' loggato. Scade dopo novanta giorni.
       - uses: actions/upload-artifact@v4
         with:
           name: lithosbase-macos-dmg
           path: release/*.dmg
           if-no-files-found: error
+
+      # La release invece e' pubblica, ed e' li' che il sito va a prendere il
+      # file. Senza questo passo il .dmg esisteva ma non se lo poteva scaricare
+      # nessun cliente, che e' come non averlo.
+      #
+      # Il file viene copiato con un nome fisso: il sito ci punta con un
+      # indirizzo che non deve cambiare a ogni versione, e electron-builder nel
+      # nome originale ci mette numero di versione e architettura.
+      - name: Pubblica il .dmg nella release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG=$(find release -maxdepth 1 -name '*.dmg' | head -1)
+          cp "$DMG" release/Lithosbase.dmg
+          gh release create "${{ github.ref_name }}" --title "Lithosbase ${{ github.ref_name }}" --notes "" || true
+          gh release upload "${{ github.ref_name }}" release/Lithosbase.dmg --clobber
