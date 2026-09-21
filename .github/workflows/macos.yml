@@ -50,13 +50,90 @@ jobs:
             npx electron-builder --mac --universal --publish never --config.mac.identity=null
           fi
 
-      - name: Controlla la firma
+      # ────────────────────────────────────────────────────────────────────
+      # LA VERIFICA, VISTO CHE UN MAC NON CE L'ABBIAMO.
+      #
+      # Questa macchina E' un Mac vero, quindi le domande che ci si farebbe
+      # aprendo il file a mano si possono fare qui, ogni volta, da sole:
+      # il disco si monta? dentro c'e' l'applicazione? gira su tutti e due i
+      # processori? e soprattutto, il Mac di un cliente la aprirebbe?
+      #
+      # Il referto finisce nel riepilogo del run, cioe' in un riquadro in cima
+      # alla pagina su github.com: si legge dal telefono senza scorrere i log.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Verifica il pacchetto
+        id: verifica
         run: |
-          APP=$(find release -maxdepth 2 -name '*.app' | head -1)
-          echo "App: $APP"
-          codesign -dv --verbose=2 "$APP" 2>&1 || true
-          spctl -a -vvv -t install "$APP" 2>&1 || true
-          ls -la release/*.dmg
+          set -o pipefail
+          DMG=$(find release -maxdepth 1 -name '*.dmg' | head -1)
+          [ -n "$DMG" ] || { echo "Nessun .dmg costruito"; exit 1; }
+
+          R() { echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          R "## Verifica del pacchetto Mac"
+          R ""
+          R "File: \`$(basename "$DMG")\`, $(du -h "$DMG" | cut -f1)"
+          R ""
+
+          # 1. il disco si monta, come quando lo apre il cliente
+          PUNTO=$(mktemp -d)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$PUNTO" >/dev/null
+          APP=$(find "$PUNTO" -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then
+            R "- Disco montato ma **dentro non c'e' nessuna applicazione**"
+            hdiutil detach "$PUNTO" >/dev/null || true
+            exit 1
+          fi
+          R "- Il disco si monta e dentro c'e' \`$(basename "$APP")\`"
+
+          # 2. su quali processori gira
+          BIN="$APP/Contents/MacOS/$(basename "$APP" .app)"
+          ARCH=$(lipo -archs "$BIN" 2>/dev/null || echo sconosciuta)
+          case "$ARCH" in
+            *arm64*x86_64*|*x86_64*arm64*) R "- Gira sui Mac nuovi e su quelli Intel ($ARCH)" ;;
+            *) R "- ⚠️ Gira solo su: $ARCH" ;;
+          esac
+
+          # 3. com'e' firmata
+          FIRMA=$(codesign -dv --verbose=2 "$APP" 2>&1 || true)
+          AUTORITA=$(echo "$FIRMA" | grep -m1 '^Authority=' | cut -d= -f2- || true)
+          if echo "$FIRMA" | grep -q 'code object is not signed'; then
+            R "- **Non firmata.** Il Mac del cliente non la aprira' al doppio clic."
+            STATO=nonfirmata
+          elif echo "$AUTORITA" | grep -q 'Developer ID'; then
+            R "- Firmata con: $AUTORITA"
+            STATO=firmata
+          else
+            R "- Firma provvisoria (ad-hoc), non riconosciuta da Apple: $AUTORITA"
+            STATO=adhoc
+          fi
+
+          # 4. la domanda vera: il Mac di un cliente la farebbe partire?
+          GATE=$(spctl -a -vvv -t install "$APP" 2>&1 || true)
+          if echo "$GATE" | grep -q 'accepted'; then
+            R "- **Gatekeeper la accetta**: si apre con un doppio clic, come qualsiasi programma."
+          else
+            R "- **Gatekeeper la rifiuta.** Chi la scarica vede un avviso e deve forzarla a mano."
+            R ""
+            R "  \`\`\`"
+            R "  $(echo "$GATE" | head -3)"
+            R "  \`\`\`"
+          fi
+
+          # 5. notarizzata? e' il timbro che toglie l'avviso anche al primo avvio
+          if xcrun stapler validate "$APP" >/dev/null 2>&1; then
+            R "- Notarizzata da Apple: nessun avviso nemmeno la prima volta."
+          else
+            R "- Non notarizzata."
+          fi
+
+          hdiutil detach "$PUNTO" >/dev/null || true
+
+          R ""
+          if [ "$STATO" = "firmata" ]; then
+            R "**Esito: consegnabile.**"
+          else
+            R "**Esito: si costruisce ma non e' pronta per un cliente.** Mancano i segreti del certificato Developer ID."
+          fi
 
       # L'artefatto serve a noi per provare: lo scarica solo chi ha accesso al
       # repository, ed e' loggato. Scade dopo novanta giorni.
