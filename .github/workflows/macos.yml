@@ -1,0 +1,62 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    env:
+      MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # Il certificato Developer ID e' opzionale: senza, esce un .dmg non firmato.
+      - name: Importa il certificato Developer ID
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          echo "$MAC_CERT_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p runner build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p runner build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k runner build.keychain
+          rm /tmp/cert.p12
+
+      - name: Costruisci il .dmg
+        run: |
+          if [ -n "$MAC_CERT_P12" ] && [ -n "$APPLE_ID" ]; then
+            echo "Build firmata e notarizzata"
+            npx electron-builder --mac --universal --publish never --config.mac.notarize=true
+          else
+            echo "Build non firmata: nessun certificato configurato"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            npx electron-builder --mac --universal --publish never --config.mac.identity=null
+          fi
+
+      - name: Controlla la firma
+        run: |
+          APP=$(find release -maxdepth 2 -name '*.app' | head -1)
+          echo "App: $APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 || true
+          spctl -a -vvv -t install "$APP" 2>&1 || true
+          ls -la release/*.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lithosbase-macos-dmg
+          path: release/*.dmg
+          if-no-files-found: error
