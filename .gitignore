@@ -1,2 +1,7 @@
 node_modules/
 release/
+
+# La chiave privata del certificato Apple. Qui dentro non entra mai:
+# senza di lei il certificato scaricato da Apple non serve a niente, e chi
+# se la prende puo' firmare software a nome nostro.
+.certificato/

@@ -27,25 +27,27 @@ jobs:
 
       - run: npm ci
 
-      # Il certificato Developer ID e' opzionale: senza, esce un .dmg non firmato.
-      - name: Importa il certificato Developer ID
-        if: env.MAC_CERT_P12 != ''
-        run: |
-          echo "$MAC_CERT_P12" | base64 --decode > /tmp/cert.p12
-          security create-keychain -p runner build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p runner build.keychain
-          security import /tmp/cert.p12 -k build.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k runner build.keychain
-          rm /tmp/cert.p12
-
+      # Il certificato e' facoltativo: senza, esce comunque un .dmg, ma non
+      # firmato e quindi non apribile da un cliente. Con i segreti impostati la
+      # stessa riga di comando firma e notarizza, senza che nessuno cambi niente.
+      #
+      # Il .p12 non si importa piu' a mano nel portachiavi: electron-builder lo
+      # prende da CSC_LINK (il contenuto in base64) e se lo installa da solo. E'
+      # la strada che documenta lui, ed elimina il pezzo piu' fragile, cioe' i
+      # permessi del portachiavi sul runner.
       - name: Costruisci il .dmg
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
           if [ -n "$MAC_CERT_P12" ] && [ -n "$APPLE_ID" ]; then
-            echo "Build firmata e notarizzata"
+            echo "Certificato e credenziali Apple presenti: firma e notarizzazione."
             npx electron-builder --mac --universal --publish never --config.mac.notarize=true
+          elif [ -n "$MAC_CERT_P12" ]; then
+            echo "Certificato presente ma manca APPLE_ID: firma senza notarizzazione."
+            npx electron-builder --mac --universal --publish never
           else
-            echo "Build non firmata: nessun certificato configurato"
+            echo "Nessun certificato: build non firmata, NON consegnabile."
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             npx electron-builder --mac --universal --publish never --config.mac.identity=null
           fi
@@ -129,10 +131,14 @@ jobs:
           hdiutil detach "$PUNTO" >/dev/null || true
 
           R ""
-          if [ "$STATO" = "firmata" ]; then
+          if [ "$STATO" = "firmata" ] && echo "$GATE" | grep -q 'accepted'; then
             R "**Esito: consegnabile.**"
+            echo "consegnabile=si" >> "$GITHUB_OUTPUT"
           else
             R "**Esito: si costruisce ma non e' pronta per un cliente.** Mancano i segreti del certificato Developer ID."
+            R ""
+            R "La procedura per crearlo, anche senza avere un Mac, sta in \`scripts/certificato-mac.ps1\`."
+            echo "consegnabile=no" >> "$GITHUB_OUTPUT"
           fi
 
       # L'artefatto serve a noi per provare: lo scarica solo chi ha accesso al
@@ -150,8 +156,12 @@ jobs:
       # Il file viene copiato con un nome fisso: il sito ci punta con un
       # indirizzo che non deve cambiare a ogni versione, e electron-builder nel
       # nome originale ci mette numero di versione e architettura.
+      # Si pubblica solo quello che un cliente riesce ad aprire. Un .dmg non
+      # firmato nella pagina dei download e' peggio di nessun download: chi lo
+      # scarica vede un avviso, pensa che il programma sia rotto, e non scrive
+      # per dirlo.
       - name: Pubblica il .dmg nella release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.verifica.outputs.consegnabile == 'si'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
