@@ -86,6 +86,26 @@ if (-not (Test-Path $cer)) {
   exit 1
 }
 
+$emittente = & $openssl x509 -inform DER -in $cer -noout -issuer 2>$null
+$scadenza  = (& $openssl x509 -inform DER -in $cer -noout -enddate 2>$null) -replace '^notAfter=', ''
+if ($emittente -notmatch 'OUs*=s*G2') {
+  Write-Host ""
+  Write-Host "Questo certificato e' stato creato con Previous Sub-CA, non con G2." -ForegroundColor Red
+  Write-Host "  Scade il: $scadenza"
+  Write-Host ""
+  Write-Host "Funzionerebbe, ma per pochi mesi: l'autorita' che lo firma scade il"
+  Write-Host "1 febbraio 2027, e un certificato non puo' durare piu' di chi lo firma."
+  Write-Host "Il G2 arriva al 2031."
+  Write-Host ""
+  Write-Host "Rifallo sulla stessa pagina, con lo stesso file di richiesta, mettendo"
+  Write-Host "il pallino su  G2 Sub-CA (Xcode 11.4.1 or later)  invece che su"
+  Write-Host "Previous Sub-CA, che il sito lascia selezionato di suo. Poi sovrascrivi"
+  Write-Host "  $cer"
+  Write-Host "e rilancia."
+  exit 1
+}
+Passo "Certificato G2, scade il $scadenza."
+
 Titolo "2. Il file unico da dare a GitHub"
 
 & $openssl x509 -inform DER -in $cer -out $pem 2>$null
